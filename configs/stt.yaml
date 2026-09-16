@@ -8,8 +8,8 @@ baseline_audio_prefix: "extracted/extracted/Audio/Audio"
 flywheel_prefix: "flywheel/stt"
 base_model: "openai/whisper-small"
 production_adapter_uri: "gs://malmoi-jeju-dataset-2026/whisper-model-weights/whisper-jeju-lora-final"
-replay_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/stt/replay-v2.jsonl"
-old_golden_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/stt/eval/old-golden-v2.jsonl"
+replay_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/stt/replay-v3.jsonl"
+old_golden_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/stt/eval/old-golden-v3.jsonl"
 new_holdout_ratio: 0.2
 replay_ratio: 1.0
 min_samples: 10
