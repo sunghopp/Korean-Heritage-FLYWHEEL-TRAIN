@@ -10,7 +10,7 @@ from google.api_core.exceptions import PreconditionFailed
 
 from .config import Config, load_config
 from .dataset import STTExample, extract_examples
-from .gcs import GCS
+from .gcs import GCS, parse_gs_uri
 from .snapshot import ActiveRunExists, create_snapshot
 
 
@@ -73,19 +73,35 @@ def bootstrap_baseline(
         blob for blob in gcs.bucket.list_blobs(prefix=f"{cfg.baseline_text_prefix}/")
         if blob.name.endswith(".json")
     ]
-    ranked = sorted(
-        labels,
-        key=lambda blob: hashlib.sha256(f"{cfg.seed}:{blob.name}".encode()).hexdigest(),
-    )
-    if len(ranked) < golden_files + replay_files:
-        raise ValueError(f"Need {golden_files + replay_files} original label files, found {len(ranked)}")
+    available_audio_objects = {
+        blob.name
+        for blob in gcs.bucket.list_blobs(prefix=f"{cfg.baseline_audio_prefix}/")
+        if not blob.name.endswith("/")
+    }
+    valid_recordings: list[tuple[str, list[STTExample]]] = []
+    for blob in labels:
+        label, generation = gcs.read_json(blob.name)
+        examples = extract_examples(label, blob.name, generation, baseline_cfg)
+        if not examples:
+            continue
+        audio_bucket, audio_name = parse_gs_uri(examples[0].audio_uri)
+        # A label can be used only when its exact source audio object is present.
+        # This prevents a historical label-only file from failing Cloud Run training.
+        if audio_bucket == cfg.bucket and audio_name in available_audio_objects:
+            valid_recordings.append((blob.name, examples))
 
-    def examples_for(blobs) -> list[STTExample]:
-        result: list[STTExample] = []
-        for blob in blobs:
-            label, generation = gcs.read_json(blob.name)
-            result.extend(extract_examples(label, blob.name, generation, baseline_cfg))
-        return result
+    ranked = sorted(
+        valid_recordings,
+        key=lambda recording: hashlib.sha256(f"{cfg.seed}:{recording[0]}".encode()).hexdigest(),
+    )
+    required_recordings = golden_files + replay_files
+    if len(ranked) < required_recordings:
+        raise ValueError(
+            f"Need {required_recordings} original labels with matching audio, found {len(ranked)}"
+        )
+
+    def examples_for(recordings: list[tuple[str, list[STTExample]]]) -> list[STTExample]:
+        return [example for _, examples in recordings for example in examples]
 
     golden = _stable_sample(examples_for(ranked[:golden_files]), cfg.seed, golden_utterances)
     replay = _stable_sample(
@@ -121,10 +137,10 @@ def main() -> None:
     snapshot = sub.add_parser("snapshot")
     snapshot.add_argument("--min-samples", type=int)
     baseline = sub.add_parser("bootstrap-baseline")
-    baseline.add_argument("--golden-files", type=int, default=5)
-    baseline.add_argument("--replay-files", type=int, default=20)
-    baseline.add_argument("--golden-utterances", type=int, default=100)
-    baseline.add_argument("--replay-utterances", type=int, default=1000)
+    baseline.add_argument("--golden-files", type=int, default=15)
+    baseline.add_argument("--replay-files", type=int, default=60)
+    baseline.add_argument("--golden-utterances", type=int, default=300)
+    baseline.add_argument("--replay-utterances", type=int, default=3000)
     args = parser.parse_args()
     cfg = load_config(args.config)
     gcs = GCS(cfg.project_id, cfg.bucket)
