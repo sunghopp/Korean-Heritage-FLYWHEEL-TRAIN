@@ -1,0 +1,2 @@
+google-cloud-storage>=2.18,<4
+PyYAML>=6.0

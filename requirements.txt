@@ -1,0 +1,9 @@
+google-cloud-storage>=2.18,<4
+datasets>=3.0,<4
+transformers>=4.48,<5
+peft==0.19.1
+torch
+librosa>=0.10
+soundfile
+jiwer>=3.0
+PyYAML>=6.0

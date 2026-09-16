@@ -1,0 +1,43 @@
+name: Create STT Flywheel Snapshot
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 2 * * *"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_FLYWHEEL_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Create snapshot when approved samples meet the threshold
+        run: |
+          pip install -r requirements-control.txt
+          RESULT=$(python -m flywheel.cli snapshot --min-samples 100)
+          echo "$RESULT"
+          SNAPSHOT_ID=$(echo "$RESULT" | jq -r '.snapshot_id')
+          CREATED=$(echo "$RESULT" | jq -r '.created')
+          if [ "$CREATED" = "true" ]; then
+            gcloud run jobs execute jeju-stt-flywheel \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --region=asia-southeast1 \
+              --args="$SNAPSHOT_ID,--config,configs/stt.yaml,--promote" \
+              --wait
+            APPROVED=$(gcloud storage cat "gs://malmoi-jeju-dataset-2026/flywheel/stt/evaluations/$SNAPSHOT_ID.json" | jq -r '.approved')
+            if [ "$APPROVED" = "true" ]; then
+              gcloud run services update jeju-backend \
+                --project="${{ secrets.GCP_PROJECT_ID }}" \
+                --region=asia-southeast1 \
+                --update-env-vars="STT_RELEASE_MANIFEST_PATH=gs://malmoi-jeju-dataset-2026/flywheel/stt/releases/current.json"
+            fi
+          fi

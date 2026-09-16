@@ -1,0 +1,24 @@
+apiVersion: run.googleapis.com/v1
+kind: Job
+metadata:
+  name: jeju-stt-flywheel
+  labels:
+    component: stt-flywheel
+spec:
+  template:
+    spec:
+      template:
+        spec:
+          serviceAccountName: jeju-stt-flywheel@PROJECT_ID.iam.gserviceaccount.com
+          timeoutSeconds: 3600
+          maxRetries: 0
+          containers:
+            - image: IMAGE_URI
+              args: ["SNAPSHOT_ID", "--config", "configs/stt.yaml", "--promote"]
+              resources:
+                limits:
+                  cpu: "4"
+                  memory: 16Gi
+                  nvidia.com/gpu: "1"
+          nodeSelector:
+            accelerator: nvidia-l4
