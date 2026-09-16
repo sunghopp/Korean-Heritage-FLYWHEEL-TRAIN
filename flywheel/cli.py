@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import datetime, timezone
 
@@ -78,17 +79,26 @@ def bootstrap_baseline(
         for blob in gcs.bucket.list_blobs(prefix=f"{cfg.baseline_audio_prefix}/")
         if not blob.name.endswith("/")
     }
-    valid_recordings: list[tuple[str, list[STTExample]]] = []
-    for blob in labels:
+    def recording_for(blob) -> tuple[str, list[STTExample]] | None:
         label, generation = gcs.read_json(blob.name)
         examples = extract_examples(label, blob.name, generation, baseline_cfg)
         if not examples:
-            continue
+            return None
         audio_bucket, audio_name = parse_gs_uri(examples[0].audio_uri)
         # A label can be used only when its exact source audio object is present.
         # This prevents a historical label-only file from failing Cloud Run training.
         if audio_bucket == cfg.bucket and audio_name in available_audio_objects:
-            valid_recordings.append((blob.name, examples))
+            return blob.name, examples
+        return None
+
+    # Original labels are independent GCS objects. Parallel reads keep bootstrap
+    # short enough for a manually run local command without changing selection.
+    with ThreadPoolExecutor(max_workers=min(16, len(labels))) as executor:
+        valid_recordings = [
+            recording
+            for recording in executor.map(recording_for, labels)
+            if recording is not None
+        ]
 
     ranked = sorted(
         valid_recordings,
