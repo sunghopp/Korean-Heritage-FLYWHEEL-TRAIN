@@ -44,10 +44,12 @@
 
 | 세트 | 원본 녹음 수 | 발화 수 | 용도 | GCS 매니페스트 |
 | --- | ---: | ---: | --- | --- |
-| Golden v3 | 5 | 100 | 기존 성능 회귀 방지용 평가 전용 | `flywheel/stt/eval/old-golden-v3.jsonl` |
-| Replay v3 | 20 | 1,000 | 증분 학습 시 과거 데이터 재노출 | `flywheel/stt/replay-v3.jsonl` |
+| Golden v3 | 15 | 300 | 기존 성능 회귀 방지용 평가 전용 | `flywheel/stt/eval/old-golden-v3.jsonl` |
+| Replay v3 | 60 | 3,000 | 증분 학습 시 과거 데이터 재노출 | `flywheel/stt/replay-v3.jsonl` |
 
 두 매니페스트는 create-only로 작성되어 덮어쓰지 않습니다. 원본 Audio와 Label JSON도 수정하지 않습니다. v1·v2 매니페스트는 초기 실험 산출물로 보존하지만 구성 파일에서 참조하지 않으며, Audio 존재 검증을 거친 v3만 운영 기준으로 사용합니다.
+
+Golden은 매 Flywheel 실행마다 운영·후보 모델을 모두 평가하므로 300발화로 제한합니다. Replay는 매 학습에 신규 Train 수만큼만 결정론적으로 추출하므로, 3,000발화를 저장해도 소규모 증분 학습의 비용은 증가하지 않고 과거 데이터의 다양성만 커집니다.
 
 ## 스냅샷과 중복 실행 방지
 
@@ -102,7 +104,7 @@
 python -m flywheel.cli --config configs/stt.yaml migrate-status --dry-run
 python -m flywheel.cli --config configs/stt.yaml migrate-status
 
-# Golden/Replay v3 생성 (기본: 100 / 1,000 발화, 실제 Audio 존재 검증)
+# Golden/Replay v3 생성 (기본: 300 / 3,000 발화, 실제 Audio 존재 검증)
 python -m flywheel.cli --config configs/stt.yaml bootstrap-baseline
 
 # 승인·미학습 데이터가 10개 이상이면 스냅샷 생성
