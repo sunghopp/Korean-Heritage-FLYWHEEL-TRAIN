@@ -12,6 +12,8 @@ class Config:
     bucket: str
     text_prefix: str
     audio_prefix: str
+    baseline_text_prefix: str
+    baseline_audio_prefix: str
     flywheel_prefix: str
     base_model: str
     production_adapter_uri: str
@@ -32,6 +34,8 @@ def load_config(path: str) -> Config:
         project_id=str(raw["project_id"]), bucket=raw["bucket"],
         text_prefix=raw["text_prefix"].strip("/"),
         audio_prefix=raw["audio_prefix"].strip("/"),
+        baseline_text_prefix=raw["baseline_text_prefix"].strip("/"),
+        baseline_audio_prefix=raw["baseline_audio_prefix"].strip("/"),
         flywheel_prefix=raw["flywheel_prefix"].strip("/"),
         base_model=raw["base_model"], production_adapter_uri=raw["production_adapter_uri"],
         replay_manifest=raw["replay_manifest"], old_golden_manifest=raw["old_golden_manifest"],

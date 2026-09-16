@@ -23,7 +23,7 @@ jobs:
       - name: Create snapshot when approved samples meet the threshold
         run: |
           pip install -r requirements-control.txt
-          RESULT=$(python -m flywheel.cli snapshot --min-samples 100)
+          RESULT=$(python -m flywheel.cli --config configs/stt.yaml snapshot)
           echo "$RESULT"
           SNAPSHOT_ID=$(echo "$RESULT" | jq -r '.snapshot_id')
           CREATED=$(echo "$RESULT" | jq -r '.created')
