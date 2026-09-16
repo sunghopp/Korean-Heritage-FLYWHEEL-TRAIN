@@ -9,7 +9,8 @@ label schema.  The only added label field is `training_status`.
 ```bash
 python -m flywheel.cli migrate-status --dry-run
 python -m flywheel.cli migrate-status
-python -m flywheel.cli snapshot --min-samples 100
+python -m flywheel.cli bootstrap-baseline
+python -m flywheel.cli snapshot
 ```
 
 `snapshot` selects `status=approved` labels whose
@@ -26,7 +27,11 @@ does it copy the candidate to the stable production prefix
 `whisper-model-weights/whisper-jeju-lora-final/`. `releases/current.json`
 records the candidate and backup locations for audit and rollback.
 
-Before the first training run, create these immutable manifests once:
+Before the first training run, create these immutable manifests once. The
+bootstrap command deterministically selects disjoint original recording files:
+five files contribute a fixed 100-utterance Golden evaluation set, and 20
+separate files contribute a 1,000-utterance replay pool. It preserves every
+original JSON and writes only the two manifests.
 
 * `flywheel/stt/replay-v1.jsonl`: approved historical examples used for replay.
 * `flywheel/stt/eval/old-golden-v1.jsonl`: historical examples never used for training.
