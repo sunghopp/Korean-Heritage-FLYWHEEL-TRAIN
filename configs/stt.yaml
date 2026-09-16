@@ -1,0 +1,16 @@
+project_id: "385248657749"
+bucket: "malmoi-jeju-dataset-2026"
+text_prefix: "dataset/extracted/Text"
+audio_prefix: "dataset/extracted/Audio"
+flywheel_prefix: "flywheel/stt"
+base_model: "openai/whisper-small"
+production_adapter_uri: "gs://malmoi-jeju-dataset-2026/whisper-model-weights/whisper-jeju-lora-final"
+replay_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/stt/replay-v1.jsonl"
+old_golden_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/stt/eval/old-golden-v1.jsonl"
+new_holdout_ratio: 0.2
+replay_ratio: 1.0
+min_samples: 100
+seed: 42
+promotion:
+  old_wer_regression_max_pp: 0.5
+  new_wer_improvement_min_pp: 1.0
