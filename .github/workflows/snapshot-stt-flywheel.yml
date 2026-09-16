@@ -2,8 +2,9 @@ name: Create STT Flywheel Snapshot
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "15 2 * * *"
+  # 비용 통제를 위해 정기 실행은 비활성화한다. 필요 시 아래 주석을 해제한다.
+  # schedule:
+  #   - cron: "15 2 * * *" # 매일 11:15 KST
 
 permissions:
   contents: read
