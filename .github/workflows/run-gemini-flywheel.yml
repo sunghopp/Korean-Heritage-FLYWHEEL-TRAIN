@@ -1,0 +1,37 @@
+name: Run Gemini Flywheel
+
+on:
+  workflow_dispatch:
+    inputs:
+      snapshot_id:
+        description: "GCS snapshot ID created by Create Gemini Flywheel Snapshot"
+        required: true
+        type: string
+      mode:
+        description: "submit: tuning job 제출, finalize: 완료된 tuning job 평가/릴리스"
+        required: true
+        default: submit
+        type: choice
+        options: [submit, finalize]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_FLYWHEEL_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Execute immutable Gemini snapshot
+        run: |
+          gcloud run jobs execute jeju-gemini-flywheel \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --region=asia-southeast1 \
+            --args="${{ inputs.snapshot_id }},--mode,${{ inputs.mode }},--config,configs/gemini.yaml" \
+            --wait

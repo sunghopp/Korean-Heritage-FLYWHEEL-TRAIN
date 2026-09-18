@@ -1,0 +1,30 @@
+name: Bootstrap Gemini Golden and Replay
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_uri:
+        description: "GCS URI of valid_gemini_jeju.jsonl"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  bootstrap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_FLYWHEEL_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Create immutable baseline manifests
+        run: |
+          pip install -r requirements-gemini.txt
+          python -m flywheel.gemini_cli --config configs/gemini.yaml bootstrap-baseline \
+            --source-uri="${{ inputs.source_uri }}" --golden-count=300 --replay-count=3000
