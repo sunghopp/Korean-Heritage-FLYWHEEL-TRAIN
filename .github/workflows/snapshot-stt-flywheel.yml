@@ -61,7 +61,7 @@ jobs:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ secrets.GCP_FLYWHEEL_SERVICE_ACCOUNT }}
       - uses: google-github-actions/setup-gcloud@v2
-      - name: Create Gemini snapshot and submit tuning when the threshold is met
+      - name: Create Gemini snapshot, submit tuning, and wait for BLEU evaluation
         run: |
           pip install -r requirements-gemini.txt
           RESULT=$(python -m flywheel.gemini_cli --config configs/gemini.yaml snapshot)
@@ -72,6 +72,19 @@ jobs:
             gcloud run jobs execute jeju-gemini-flywheel \
               --project="${{ secrets.GCP_PROJECT_ID }}" \
               --region=asia-southeast1 \
-              --args="$SNAPSHOT_ID,--mode,submit,--config,configs/gemini.yaml" \
+              --args="$SNAPSHOT_ID,--mode,wait,--poll-seconds,300,--max-wait-seconds,14400,--config,configs/gemini.yaml" \
               --wait
+            EVALUATION="gs://malmoi-jeju-dataset-2026/flywheel/gemini/evaluations/$SNAPSHOT_ID.json"
+            if gcloud storage ls "$EVALUATION" >/dev/null 2>&1; then
+              APPROVED=$(gcloud storage cat "$EVALUATION" | jq -r '.approved')
+              if [ "$APPROVED" = "true" ]; then
+                CANDIDATE_ENDPOINT=$(gcloud storage cat "$EVALUATION" | jq -r '.candidate_endpoint')
+                gcloud run services update jeju-backend \
+                  --project="${{ secrets.GCP_PROJECT_ID }}" \
+                  --region=asia-southeast1 \
+                  --update-env-vars="GEMINI_TUNED_ENDPOINT=$CANDIDATE_ENDPOINT"
+              fi
+            else
+              echo "Tuning is still running after the maximum wait; run Gemini finalize later."
+            fi
           fi
