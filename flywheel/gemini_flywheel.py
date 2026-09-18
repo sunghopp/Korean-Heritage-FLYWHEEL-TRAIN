@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -236,6 +237,11 @@ def finalize_tuning(gcs: GCS, cfg: GeminiConfig, snapshot_id: str) -> dict[str, 
     job = _tuning_request(cfg, run["tuning_job"])
     state = str(job.get("state") or job.get("status") or "").upper()
     if state not in {"SUCCEEDED", "SUCCESS", "JOB_STATE_SUCCEEDED"}:
+        terminal_failure = {"FAILED", "CANCELLED", "CANCELED", "JOB_STATE_FAILED", "JOB_STATE_CANCELLED"}
+        if state in terminal_failure:
+            run.update({"status": "tuning_failed", "last_observed_tuning_state": state, "last_checked_at": _now()})
+            gcs.write_json(name, run, generation=generation)
+            return run
         run.update({"last_observed_tuning_state": state, "last_checked_at": _now()})
         gcs.write_json(name, run, generation=generation)
         return run
@@ -274,6 +280,40 @@ def finalize_tuning(gcs: GCS, cfg: GeminiConfig, snapshot_id: str) -> dict[str, 
         gcs.write_json(f"{cfg.flywheel_prefix}/releases/current.json", release)
         _mark_promoted(gcs, snapshot_id, _read_jsonl(gcs, run["manifest"]))
     return run
+
+
+def submit_and_wait(
+    gcs: GCS,
+    cfg: GeminiConfig,
+    snapshot_id: str,
+    *,
+    poll_seconds: int = 300,
+    max_wait_seconds: int = 14400,
+) -> dict[str, Any]:
+    """Submit tuning then poll until it is evaluated, without holding a GPU.
+
+    A bounded wait keeps the Cloud Run CPU job from running indefinitely if the
+    managed tuning service is delayed.  A later ``finalize`` invocation can
+    safely resume from the immutable submitted snapshot.
+    """
+    if poll_seconds <= 0 or max_wait_seconds <= 0:
+        raise ValueError("poll_seconds and max_wait_seconds must be positive")
+    run = submit_tuning(gcs, cfg, snapshot_id)
+    if run["status"] in {"approved", "rejected", "tuning_failed"}:
+        return run
+    deadline = time.monotonic() + max_wait_seconds
+    while True:
+        run = finalize_tuning(gcs, cfg, snapshot_id)
+        if run["status"] in {"approved", "rejected", "tuning_failed"}:
+            return run
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            run_name = f"{cfg.flywheel_prefix}/runs/{snapshot_id}/run.json"
+            latest, generation = gcs.read_json(run_name)
+            latest.update({"wait_timeout_at": _now(), "wait_timeout_seconds": max_wait_seconds})
+            gcs.write_json(run_name, latest, generation=generation)
+            return latest
+        time.sleep(min(poll_seconds, remaining))
 
 
 def _mark_promoted(gcs: GCS, snapshot_id: str, rows: list[dict[str, Any]]) -> None:
