@@ -39,4 +39,4 @@ jobs:
             --region="$REGION" \
             --image="$IMAGE" \
             --service-account="${{ secrets.GCP_STT_RUNTIME_SERVICE_ACCOUNT }}" \
-            --cpu=2 --memory=4Gi --task-timeout=3600 --max-retries=0
+            --cpu=2 --memory=4Gi --task-timeout=14400 --max-retries=0
