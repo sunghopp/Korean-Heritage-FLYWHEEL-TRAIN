@@ -117,7 +117,7 @@ python -m flywheel.pipeline 9f93283c3c966eaf2d99 --config configs/stt.yaml --pro
 ## Cloud Run 및 GitHub Actions
 
 - `deploy-stt-flywheel.yml`: Docker 이미지를 Artifact Registry에 올리고 GPU(L4) Cloud Run Job을 배포합니다.
-- `snapshot-stt-flywheel.yml`: 매일 실행하거나 수동 실행해 스냅샷을 만들고, 신규 스냅샷일 때만 학습 Job을 실행합니다.
+- `snapshot-stt-flywheel.yml`: STT와 Gemini가 같은 수동 Trigger에서 스냅샷을 만들고, 신규 스냅샷일 때만 각 학습 Job을 시작합니다.
 - `run-stt-flywheel.yml`: 특정 snapshot ID를 지정해 수동 재실행합니다.
 
 GitHub Actions에는 Workload Identity Federation을 사용합니다. 필요한 repository secrets는 다음과 같습니다.
@@ -135,9 +135,9 @@ GitHub Actions에는 Workload Identity Federation을 사용합니다. 필요한 
 
 Gemini 파이프라인은 **제주어 입력(`dialect_form`) → 표준어 번역(`standard_form`)** 한 가지 작업만 학습합니다. 기존 JSON 경로와 형식은 그대로 사용하며, `training_status.gemini`만 상태 기록에 사용합니다. `ars_reply_jeju`, Scenario, 음성 파일, Confidence 산출값은 Gemini 조정 학습 데이터로 저장하거나 사용하지 않습니다.
 
-현재 API의 Gemini 호출은 번역과 ARS 답변을 하나의 응답 형식으로 사용합니다. 반면 후보 조정 모델은 번역 전용입니다. 그래서 이 파이프라인은 통과한 후보의 엔드포인트를 `flywheel/gemini/releases/current.json`에만 기록하고, API 환경변수를 자동 교체하지 않습니다. RAG 기반 Scenario/ARS 응답 경로가 API에 분리된 뒤에만 명시적으로 번역 엔드포인트를 연결해야 기존 기능이 깨지지 않습니다.
+기존 Gemini 조정 모델도 번역 쌍만 학습했다는 전제에서, 후보가 BLEU gate를 통과하면 `Run Gemini Flywheel`의 `finalize` 단계가 API의 `GEMINI_TUNED_ENDPOINT`를 후보 endpoint로 즉시 교체합니다. 이전 endpoint와 후보 endpoint는 release record에 함께 남으므로, 이전 endpoint로 API 환경변수를 되돌려 롤백할 수 있습니다.
 
-사용자가 지정한 Agent Platform 모델 버전은 기존 성능의 **평가 기준선**입니다. Gemini supervised tuning은 해당 모델 버전을 덮어쓰지 않고 별도의 tuned model/endpoint를 생성하므로, 기존 엔드포인트와 후보 엔드포인트를 같은 데이터로 비교한 뒤 후보를 릴리스합니다.
+사용자가 지정한 Agent Platform 모델 version `880260762860257280@1`은 첫 **연속 조정 시작점**입니다. 이후에는 직전 승인 모델 version을 `preTunedModel`로 사용해 기존 LoRA/조정 가중치 위에 추가 SFT를 수행합니다. 각 조정은 새 version/endpoint를 생성하며, 기존 endpoint와 후보 endpoint를 같은 데이터로 비교한 뒤 후보를 릴리스합니다.
 
 ### GCS 상태와 불변 산출물
 
@@ -179,13 +179,12 @@ BLEU는 번역 전체의 n-gram 유사도를 일관된 0~100 점수로 비교하
 
 1. `Bootstrap Gemini Golden and Replay`를 한 번 실행합니다. `valid_gemini_jeju.jsonl`을 올린 `gs://...` URI를 입력합니다.
 2. `Deploy Gemini Flywheel Job`으로 CPU Cloud Run Job `jeju-gemini-flywheel`을 배포합니다.
-3. 사람 검수 번역이 100개 이상이면 `Create Gemini Flywheel Snapshot`을 실행하고 출력의 `snapshot_id`를 확인합니다.
-4. `Run Gemini Flywheel`에서 `mode=submit`과 snapshot ID를 넣습니다. 이 단계는 tuning job을 제출하고 ID만 GCS에 기록하므로 완료 대기 비용이 없습니다.
-5. Agent Platform에서 tuning이 완료된 뒤 같은 workflow를 `mode=finalize`로 실행합니다. Golden/New BLEU를 비교해 release record를 생성하거나 거절합니다.
-6. 릴리스가 승인되어도 API 엔드포인트는 자동 변경하지 않습니다. 번역 전용 호출과 RAG 기반 ARS 답변이 분리된 API 변경 후, `releases/current.json`의 `candidate_endpoint`를 명시적으로 연결합니다.
+3. `Start Data Flywheel Training`을 실행합니다. `both`는 STT·Gemini를 함께, `stt`/`gemini`는 해당 파이프라인만 시작합니다. 두 파이프라인은 같은 수동 Trigger와 비활성화된 동일 스케줄 정책을 사용합니다.
+4. Gemini 신규 데이터가 100개 이상이면 이 Trigger가 스냅샷을 만들고 tuning job을 제출합니다. 제출 Job은 ID만 GCS에 기록하므로 완료 대기 비용이 없습니다.
+5. Agent Platform에서 tuning이 완료된 뒤 `Run Gemini Flywheel`을 `mode=finalize`로 실행합니다. Golden/New BLEU를 비교해 통과하면 release record를 생성하고 API의 `GEMINI_TUNED_ENDPOINT`를 즉시 후보 endpoint로 교체합니다. 거절 시 API endpoint는 변경하지 않습니다.
 
 ### 권한과 구성
 
 Gemini Job은 기존 `GCP_STT_RUNTIME_SERVICE_ACCOUNT`를 런타임 계정으로 재사용합니다. 이 계정에는 GCS 객체 읽기/쓰기 외에 Agent Platform tuning job 생성·조회 권한(통상 `roles/aiplatform.user`)이 필요합니다. GitHub Actions 계정은 기존 Workload Identity Federation의 Artifact Registry·Cloud Run 배포/실행 권한을 계속 사용합니다.
 
-후보의 기반 모델은 비용을 고려해 `gemini-2.5-flash`로 구성했으며, 실제 프로젝트에서 지정된 Agent Platform 모델 버전과 기존 endpoint의 연결은 최초 실행 전 `gcloud ai models describe`로 확인합니다. 기준 endpoint는 `configs/gemini.yaml`에서 한 곳만 변경하면 됩니다.
+연속 조정은 Agent Platform REST API의 `preTunedModel`을 사용합니다. 첫 실행은 `configs/gemini.yaml`의 지정 모델 version에서 시작하며, 이후 실행은 `releases/current.json`의 승인된 `candidate_model`을 자동으로 다음 시작점으로 사용합니다.

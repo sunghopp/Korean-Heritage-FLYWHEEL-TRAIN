@@ -1,7 +1,14 @@
-name: Create STT Flywheel Snapshot
+name: Start Data Flywheel Training
 
 on:
   workflow_dispatch:
+    inputs:
+      pipeline:
+        description: "실행할 Flywheel"
+        required: true
+        default: both
+        type: choice
+        options: [both, stt, gemini]
   # 비용 통제를 위해 정기 실행은 비활성화한다. 필요 시 아래 주석을 해제한다.
   # schedule:
   #   - cron: "15 2 * * *" # 매일 11:15 KST
@@ -11,7 +18,8 @@ permissions:
   id-token: write
 
 jobs:
-  snapshot:
+  stt:
+    if: inputs.pipeline == 'both' || inputs.pipeline == 'stt'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -41,4 +49,29 @@ jobs:
                 --region=asia-southeast1 \
                 --update-env-vars="STT_RELEASE_MANIFEST_PATH=gs://malmoi-jeju-dataset-2026/flywheel/stt/releases/current.json"
             fi
+          fi
+  gemini:
+    if: inputs.pipeline == 'both' || inputs.pipeline == 'gemini'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_FLYWHEEL_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Create Gemini snapshot and submit tuning when the threshold is met
+        run: |
+          pip install -r requirements-gemini.txt
+          RESULT=$(python -m flywheel.gemini_cli --config configs/gemini.yaml snapshot)
+          echo "$RESULT"
+          SNAPSHOT_ID=$(echo "$RESULT" | jq -r '.snapshot_id')
+          CREATED=$(echo "$RESULT" | jq -r '.created')
+          if [ "$CREATED" = "true" ]; then
+            gcloud run jobs execute jeju-gemini-flywheel \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --region=asia-southeast1 \
+              --args="$SNAPSHOT_ID,--mode,submit,--config,configs/gemini.yaml" \
+              --wait
           fi

@@ -13,7 +13,7 @@ class GeminiConfig:
     text_prefix: str
     flywheel_prefix: str
     baseline_endpoint: str
-    base_model: str
+    initial_pre_tuned_model: str
     replay_manifest: str
     old_golden_manifest: str
     min_samples: int
@@ -33,7 +33,7 @@ def load_gemini_config(path: str) -> GeminiConfig:
         project_id=str(raw["project_id"]), bucket=raw["bucket"],
         text_prefix=raw["text_prefix"].strip("/"),
         flywheel_prefix=raw["flywheel_prefix"].strip("/"),
-        baseline_endpoint=raw["baseline_endpoint"], base_model=raw["base_model"],
+        baseline_endpoint=raw["baseline_endpoint"], initial_pre_tuned_model=raw["initial_pre_tuned_model"],
         replay_manifest=raw["replay_manifest"], old_golden_manifest=raw["old_golden_manifest"],
         min_samples=int(raw["min_samples"]), validation_ratio=float(raw["validation_ratio"]),
         min_validation_samples=int(raw["min_validation_samples"]), replay_ratio=float(raw["replay_ratio"]),

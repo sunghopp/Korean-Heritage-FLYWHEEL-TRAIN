@@ -35,3 +35,17 @@ jobs:
             --region=asia-southeast1 \
             --args="${{ inputs.snapshot_id }},--mode,${{ inputs.mode }},--config,configs/gemini.yaml" \
             --wait
+      - name: Apply approved translation endpoint to API
+        if: inputs.mode == 'finalize'
+        run: |
+          EVALUATION="gs://malmoi-jeju-dataset-2026/flywheel/gemini/evaluations/${{ inputs.snapshot_id }}.json"
+          APPROVED=$(gcloud storage cat "$EVALUATION" | jq -r '.approved')
+          if [ "$APPROVED" = "true" ]; then
+            CANDIDATE_ENDPOINT=$(gcloud storage cat "$EVALUATION" | jq -r '.candidate_endpoint')
+            gcloud run services update jeju-backend \
+              --project="${{ secrets.GCP_PROJECT_ID }}" \
+              --region=asia-southeast1 \
+              --update-env-vars="GEMINI_TUNED_ENDPOINT=$CANDIDATE_ENDPOINT"
+          else
+            echo "BLEU gate rejected this candidate; the API endpoint is unchanged."
+          fi

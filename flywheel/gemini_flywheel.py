@@ -13,6 +13,8 @@ from typing import Any
 
 import sacrebleu
 from google.api_core.exceptions import PreconditionFailed
+from google.auth import default
+from google.auth.transport.requests import AuthorizedSession
 
 from .gemini_config import GeminiConfig
 from .gcs import GCS, gs_uri, parse_gs_uri
@@ -112,6 +114,22 @@ def _write_dataset(gcs: GCS, name: str, rows: list[dict[str, Any]]) -> str:
     return gs_uri(gcs.bucket.name, name)
 
 
+def _current_release(gcs: GCS, cfg: GeminiConfig) -> dict[str, Any] | None:
+    name = f"{cfg.flywheel_prefix}/releases/current.json"
+    if not gcs.bucket.blob(name).exists():
+        return None
+    release, _ = gcs.read_json(name)
+    return release
+
+
+def _operating_model(gcs: GCS, cfg: GeminiConfig) -> tuple[str, str]:
+    """Resolve the model/version and endpoint that are currently in production."""
+    release = _current_release(gcs, cfg)
+    if release:
+        return str(release["candidate_model"]), str(release["candidate_endpoint"])
+    return cfg.initial_pre_tuned_model, cfg.baseline_endpoint
+
+
 def prepare_tuning_data(gcs: GCS, cfg: GeminiConfig, snapshot_id: str) -> tuple[dict[str, Any], int]:
     run_name = f"{cfg.flywheel_prefix}/runs/{snapshot_id}/run.json"
     run, generation = gcs.read_json(run_name)
@@ -148,27 +166,39 @@ def _client(cfg: GeminiConfig):
     return genai.Client(http_options=HttpOptions(api_version="v1beta1"))
 
 
+def _tuning_request(cfg: GeminiConfig, path: str, *, body: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Call the v1 tuning API, which exposes preTunedModel continuous SFT."""
+    credentials, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+    session = AuthorizedSession(credentials)
+    url = f"https://us-central1-aiplatform.googleapis.com/v1/{path.lstrip('/')}"
+    response = session.post(url, json=body, timeout=90) if body is not None else session.get(url, timeout=90)
+    if not response.ok:
+        raise RuntimeError(f"Agent Platform API {response.status_code}: {response.text}")
+    return response.json()
+
+
 def submit_tuning(gcs: GCS, cfg: GeminiConfig, snapshot_id: str) -> dict[str, Any]:
     run, _ = prepare_tuning_data(gcs, cfg, snapshot_id)
     if run["status"] == "submitted":
         return run
     if run["status"] != "prepared":
         raise RuntimeError(f"Snapshot {snapshot_id} cannot be submitted from status={run['status']}")
-    from google.genai.types import CreateTuningJobConfig, TuningDataset
-    client = _client(cfg)
-    job = client.tunings.tune(
-        base_model=cfg.base_model,
-        training_dataset=TuningDataset(gcs_uri=run["train_dataset"]),
-        config=CreateTuningJobConfig(
-            tuned_model_display_name=f"jeju-translation-{snapshot_id}",
-            validation_dataset=TuningDataset(gcs_uri=run["validation_dataset"]),
-        ),
-    )
+    source_model, source_endpoint = _operating_model(gcs, cfg)
+    job = _tuning_request(cfg, f"projects/{cfg.project_id}/locations/us-central1/tuningJobs", body={
+        # Omit tunedModelDisplayName: Agent Platform creates the next version in
+        # the pre-tuned model lineage instead of a disconnected model.
+        "preTunedModel": {"tunedModelName": source_model},
+        "supervisedTuningSpec": {
+            "trainingDatasetUri": run["train_dataset"],
+            "validationDatasetUri": run["validation_dataset"],
+        },
+    })
     name = f"{cfg.flywheel_prefix}/runs/{snapshot_id}/run.json"
     latest, generation = gcs.read_json(name)
     if latest["status"] == "submitted":
         return latest
-    latest.update({"status": "submitted", "tuning_job": job.name, "submitted_at": _now()})
+    latest.update({"status": "submitted", "tuning_job": job["name"], "submitted_at": _now(),
+                   "source_model": source_model, "source_endpoint": source_endpoint})
     gcs.write_json(name, latest, generation=generation)
     return latest
 
@@ -203,26 +233,30 @@ def finalize_tuning(gcs: GCS, cfg: GeminiConfig, snapshot_id: str) -> dict[str, 
     if run["status"] != "submitted":
         raise RuntimeError(f"Snapshot {snapshot_id} cannot finalize from status={run['status']}")
     client = _client(cfg)
-    job = client.tunings.get(name=run["tuning_job"])
-    state = _state_name(job)
-    if state not in {"SUCCEEDED", "SUCCESS"}:
+    job = _tuning_request(cfg, run["tuning_job"])
+    state = str(job.get("state") or job.get("status") or "").upper()
+    if state not in {"SUCCEEDED", "SUCCESS", "JOB_STATE_SUCCEEDED"}:
         run.update({"last_observed_tuning_state": state, "last_checked_at": _now()})
         gcs.write_json(name, run, generation=generation)
         return run
-    candidate_endpoint = str(job.tuned_model.endpoint)
+    tuned_model = job.get("tunedModel") or {}
+    candidate_endpoint = str(tuned_model["endpoint"])
+    candidate_model = str(tuned_model["model"])
     validation = _read_jsonl(gcs, run["manifest"])
     validation_ids = {row["sample_id"] for row in _rank(validation, cfg.seed)[:run["validation_count"]]}
     new_validation = [row for row in validation if row["sample_id"] in validation_ids]
     golden = _read_jsonl(gcs, cfg.old_golden_manifest)
-    baseline_old = _bleu(client, cfg.baseline_endpoint, golden)
+    baseline_endpoint = str(run["source_endpoint"])
+    baseline_old = _bleu(client, baseline_endpoint, golden)
     candidate_old = _bleu(client, candidate_endpoint, golden)
-    baseline_new = _bleu(client, cfg.baseline_endpoint, new_validation)
+    baseline_new = _bleu(client, baseline_endpoint, new_validation)
     candidate_new = _bleu(client, candidate_endpoint, new_validation)
     old_delta = candidate_old["bleu"] - baseline_old["bleu"]
     new_delta = candidate_new["bleu"] - baseline_new["bleu"]
     approved = old_delta >= -cfg.old_bleu_regression_max and new_delta >= cfg.new_bleu_improvement_min
     report = {
-        "snapshot_id": snapshot_id, "evaluated_at": _now(), "baseline_endpoint": cfg.baseline_endpoint,
+        "snapshot_id": snapshot_id, "evaluated_at": _now(), "baseline_endpoint": baseline_endpoint,
+        "source_model": run["source_model"], "candidate_model": candidate_model,
         "candidate_endpoint": candidate_endpoint, "baseline_old": baseline_old, "candidate_old": candidate_old,
         "baseline_new": baseline_new, "candidate_new": candidate_new,
         "old_bleu_delta": round(old_delta, 4), "new_bleu_delta": round(new_delta, 4),
