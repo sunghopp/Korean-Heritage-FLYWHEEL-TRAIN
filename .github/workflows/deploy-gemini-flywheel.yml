@@ -1,0 +1,42 @@
+name: Deploy Gemini Flywheel Job
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  REGION: asia-southeast1
+  REPOSITORY_ID: jeju-flywheel
+  JOB_NAME: jeju-gemini-flywheel
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_FLYWHEEL_SERVICE_ACCOUNT }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Build and push Gemini image
+        run: |
+          gcloud auth configure-docker "${REGION}-docker.pkg.dev" --quiet
+          IMAGE="${REGION}-docker.pkg.dev/${{ secrets.GCP_PROJECT_ID }}/${REPOSITORY_ID}/gemini-flywheel:${{ github.sha }}"
+          docker build -f cloudrun/Dockerfile.gemini -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+      - name: Deploy Cloud Run Job
+        run: |
+          gcloud run jobs deploy "$JOB_NAME" \
+            --project="${{ secrets.GCP_PROJECT_ID }}" \
+            --region="$REGION" \
+            --image="$IMAGE" \
+            --service-account="${{ secrets.GCP_STT_RUNTIME_SERVICE_ACCOUNT }}" \
+            --cpu=2 --memory=4Gi --task-timeout=3600 --max-retries=0

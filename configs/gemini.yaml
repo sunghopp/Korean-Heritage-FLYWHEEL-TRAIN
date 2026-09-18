@@ -1,0 +1,22 @@
+project_id: "385248657749"
+bucket: "malmoi-jeju-dataset-2026"
+text_prefix: "dataset/extracted/Text"
+flywheel_prefix: "flywheel/gemini"
+# Existing Agent Platform translation endpoint. It is the first evaluation baseline.
+baseline_endpoint: "projects/385248657749/locations/us-central1/endpoints/7571681821318971392"
+# The existing translation LoRA/version is the first continuous-SFT source.
+# After an approved run, releases/current.json supplies the next source version.
+initial_pre_tuned_model: "projects/385248657749/locations/us-central1/models/880260762860257280@1"
+old_golden_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/gemini/eval/old-golden-v1.jsonl"
+replay_manifest: "gs://malmoi-jeju-dataset-2026/flywheel/gemini/replay-v1.jsonl"
+min_samples: 100
+validation_ratio: 0.2
+min_validation_samples: 20
+replay_ratio: 1.0
+seed: 42
+# Automated Gemini output is not valid ground truth for BLEU gating.
+require_human_review: true
+promotion:
+  # BLEU score is on a 0-100 scale.
+  old_bleu_regression_max: 1.0
+  new_bleu_improvement_min: 1.0

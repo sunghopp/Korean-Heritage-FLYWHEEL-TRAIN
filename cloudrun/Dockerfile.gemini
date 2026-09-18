@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+COPY requirements-gemini.txt .
+RUN pip install --no-cache-dir -r requirements-gemini.txt
+COPY flywheel ./flywheel
+COPY configs/gemini.yaml ./configs/gemini.yaml
+
+ENTRYPOINT ["python", "-m", "flywheel.gemini_pipeline"]
