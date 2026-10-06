@@ -181,9 +181,7 @@ GitHub Actions secrets로 `GCP_PROJECT_ID`, `GCP_WORKLOAD_IDENTITY_PROVIDER`, `G
 
 현재 설정은 snapshot 최소량 10과 validation 최소 2를 사용합니다. Golden/replay baseline manifest는 STT `300` 발화/`3,000` 발화, Gemini `300`쌍/`3,000`쌍을 bootstrap CLI 기본값으로 생성할 수 있습니다. 각 실행의 실제 표본 수와 score는 `evaluations/{snapshot_id}.json`에 기록됩니다.
 
-### 발표 자료 결과
-
-아래는 사용자가 제공한 발표 이미지의 카카오브레인 제주어 데이터 200개 샘플 비교입니다. 이 표는 발표 결과이며 매 workflow가 자동으로 다시 산출하는 고정값은 아닙니다.
+### WER/BLEU 지표를 통한 모델 개선 결과
 
 | 지표 | 베이스 모델 | 제주어 파인튜닝 | 파인튜닝 + 플라이휠 | 파인튜닝 변화 | 플라이휠 추가 변화 | 전체 변화 |
 |---|---:|---:|---:|---:|---:|---:|
